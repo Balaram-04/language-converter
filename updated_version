@@ -1,0 +1,219 @@
+import os
+import socket
+import sounddevice as sd
+import numpy as np
+import scipy.io.wavfile as wav
+
+import whisper
+import noisereduce as nr
+import pyttsx3
+from deepmultilingualpunctuation import PunctuationModel
+from argostranslate import translate
+
+import speech_recognition as sr
+from googletrans import Translator
+from gtts import gTTS
+
+
+# ======================================================
+#                UTILITIES
+# ======================================================
+
+def check_internet():
+    try:
+        socket.create_connection(("8.8.8.8", 53))
+        return True
+    except:
+        return False
+
+
+def get_language():
+    indian_languages = {
+        "Hindi": "hi",
+        "Malayalam": "ml",
+        "Tamil": "ta",
+        "Telugu": "te",
+        "Kannada": "kn",
+        "Bengali": "bn",
+        "Marathi": "mr",
+        "Gujarati": "gu",
+        "Punjabi": "pa",
+        "Odia": "or",
+        "Urdu": "ur"
+    }
+
+    print("\nAvailable Languages:")
+    for name in indian_languages:
+        print("•", name)
+
+    choice = input("\nEnter language: ").strip()
+
+    if choice not in indian_languages:
+        print("Invalid language")
+        exit()
+
+    return indian_languages[choice]
+
+
+# ======================================================
+#                AUDIO INPUT
+# ======================================================
+
+def record_offline_audio():
+    SAMPLE_RATE = 16000
+    DURATION = 6
+
+    print("\n🎤 Speak now (offline)...")
+
+    audio = sd.rec(
+        int(DURATION * SAMPLE_RATE),
+        samplerate=SAMPLE_RATE,
+        channels=1,
+        dtype=np.int16
+    )
+
+    sd.wait()
+
+    wav.write("input.wav", SAMPLE_RATE, audio)
+    return "input.wav"
+
+
+def reduce_noise(file):
+    rate, data = wav.read(file)
+    clean = nr.reduce_noise(y=data, sr=rate)
+    wav.write("clean.wav", rate, clean)
+    return "clean.wav"
+
+
+# ======================================================
+#                SPEECH TO TEXT
+# ======================================================
+
+def online_speech_to_text():
+    recognizer = sr.Recognizer()
+
+    with sr.Microphone() as source:
+        print("\n🎤 Speak now...")
+        recognizer.adjust_for_ambient_noise(source, 1)
+        audio = recognizer.listen(source)
+
+    return recognizer.recognize_google(audio)
+
+
+def offline_speech_to_text(file):
+    model = whisper.load_model("base")
+    result = model.transcribe(file)
+    return result["text"]
+
+
+# ======================================================
+#                PUNCTUATION
+# ======================================================
+
+def restore_punctuation(text):
+    p = PunctuationModel()
+    return p.restore_punctuation(text)
+
+
+# ======================================================
+#                TRANSLATION
+# ======================================================
+
+def online_translate(text, target_lang):
+    translator = Translator()
+    translated = translator.translate(
+        text, src='en', dest=target_lang
+    )
+    return translated.text
+
+
+def offline_translate(text, target_lang):
+    installed = translate.get_installed_languages()
+
+    en = list(filter(lambda x: x.code == "en", installed))[0]
+    tgt = list(filter(lambda x: x.code == target_lang, installed))[0]
+
+    translation = en.get_translation(tgt)
+
+    return translation.translate(text)
+
+
+# ======================================================
+#                TEXT TO SPEECH
+# ======================================================
+
+def online_tts(text, lang):
+    tts = gTTS(text=text, lang=lang)
+    tts.save("output.mp3")
+    os.system("start output.mp3")
+
+
+def offline_tts(text):
+    engine = pyttsx3.init()
+
+    engine.setProperty('rate', 150)
+    engine.setProperty('volume', 1.0)
+
+    engine.say(text)
+    engine.runAndWait()
+
+
+# ======================================================
+#                MAIN PIPELINE
+# ======================================================
+
+def online_pipeline(target_lang):
+    try:
+        text = online_speech_to_text()
+        print("Recognized:", text)
+
+        translated = online_translate(text, target_lang)
+        print("Translated:", translated)
+
+        online_tts(translated, target_lang)
+
+    except Exception as e:
+        print("Online error:", e)
+
+
+def offline_pipeline(target_lang):
+
+    audio = record_offline_audio()
+
+    clean = reduce_noise(audio)
+
+    text = offline_speech_to_text(clean)
+    print("Recognized:", text)
+
+    text = restore_punctuation(text)
+    print("After punctuation:", text)
+
+    translated = offline_translate(text, target_lang)
+    print("Translated:", translated)
+
+    offline_tts(translated)
+
+
+# ======================================================
+#                CONTROLLER
+# ======================================================
+
+def main():
+
+    target_lang = get_language()
+
+    ONLINE = check_internet()
+
+    print("\nMode:", "ONLINE" if ONLINE else "OFFLINE")
+
+    if ONLINE:
+        online_pipeline(target_lang)
+    else:
+        offline_pipeline(target_lang)
+
+    print("\n✅ Completed")
+
+
+if __name__ == "__main__":
+    main()
+
